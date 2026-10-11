@@ -23,4 +23,9 @@ declare module "leaflet" {
     setBearing(theta: number): void;
     getBearing(): number;
   }
+
+  interface Point {
+    /** Rota el punto `theta` radianes alrededor del origen (agregado por el plugin). */
+    rotate(theta: number): Point;
+  }
 }
