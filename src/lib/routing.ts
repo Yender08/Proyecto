@@ -13,6 +13,7 @@ import {
   nearestSafeTransferPair,
 } from "./geo";
 import { getWalkingPath } from "./snapToRoad";
+import { loadRoadHazards, type RoadHazards } from "./roadHazards";
 
 /**
  * Planificador de viajes multimodal (caminata + rutas + transbordos).
@@ -140,9 +141,13 @@ async function evaluateBoardingCandidate(
   cum: number[],
   from: Point,
   fraction: number,
-  maxWalkMeters: number
+  maxWalkMeters: number,
+  hazards: RoadHazards | null
 ): Promise<{ candidate: ReachableRoutePoint; isBigDetour: boolean } | null> {
   const point = pointAtFraction(path, fraction, cum).point;
+  // En una rotonda, un distribuidor, un puente o una autopista no se puede
+  // subir ni bajar, aunque sea el punto más cercano.
+  if (hazards?.isUnsafeStop(point)) return null;
   const straightMeters = haversineMeters(from, point);
   if (straightMeters > maxWalkMeters) return null;
 
@@ -187,7 +192,8 @@ async function findReachableRoutePoint(
   cum: number[],
   from: Point,
   baseFraction: number,
-  maxWalkMeters: number
+  maxWalkMeters: number,
+  hazards: RoadHazards | null
 ): Promise<ReachableRoutePoint | null> {
   const candidateFractions = safeFractionCandidates(
     path,
@@ -203,14 +209,15 @@ async function findReachableRoutePoint(
     cum,
     from,
     candidateFractions[0],
-    maxWalkMeters
+    maxWalkMeters,
+    hazards
   );
   if (first && !first.isBigDetour) return first.candidate;
 
   const rest = await Promise.all(
     candidateFractions
       .slice(1)
-      .map((fraction) => evaluateBoardingCandidate(path, cum, from, fraction, maxWalkMeters))
+      .map((fraction) => evaluateBoardingCandidate(path, cum, from, fraction, maxWalkMeters, hazards))
   );
 
   // Se respeta el orden de prioridad original (el más cercano primero,
@@ -236,7 +243,8 @@ async function findReachableRoutePoint(
 async function findShorterWalkToRide(
   ridePath: Point[],
   from: Point,
-  currentWalkMeters: number
+  currentWalkMeters: number,
+  hazards: RoadHazards | null
 ): Promise<ReachableRoutePoint | null> {
   const cum = cumulativeDistances(ridePath);
   const proj = projectPointToPath(ridePath, from, cum);
@@ -253,7 +261,8 @@ async function findShorterWalkToRide(
     cum,
     from,
     proj.fraction,
-    currentWalkMeters - minSaving
+    currentWalkMeters - minSaving,
+    hazards
   );
   return found && found.distanceMeters <= currentWalkMeters - minSaving ? found : null;
 }
@@ -298,6 +307,15 @@ export async function planTrip(
       { to: a, weightSeconds: seconds, distanceMeters, routeId },
     ]);
   }
+
+  // Zonas donde no se puede subir ni bajar (rotondas, distribuidores,
+  // puentes): se consultan antes de elegir cualquier punto de abordaje,
+  // bajada o transbordo fuera de una parada.
+  const hazards = await loadRoadHazards([
+    ...routes.flatMap((r) => r.path),
+    origin,
+    destination,
+  ]);
 
   addNode({ id: ORIGIN_NODE, point: origin, label: "Tu ubicación" });
   addNode({ id: DEST_NODE, point: destination, label: "Destino" });
@@ -390,7 +408,8 @@ export async function planTrip(
               cum,
               origin,
               projectPointToPath(route.path, origin, cum).fraction,
-              MAX_WALK_TO_BOARD_METERS
+              MAX_WALK_TO_BOARD_METERS,
+              hazards
             )
           : null,
         findReachableRoutePoint(
@@ -398,7 +417,8 @@ export async function planTrip(
           cum,
           destination,
           projectPointToPath(route.path, destination, cum).fraction,
-          MAX_WALK_TO_BOARD_METERS
+          MAX_WALK_TO_BOARD_METERS,
+          hazards
         ),
       ]);
 
@@ -475,6 +495,12 @@ export async function planTrip(
 
       const safePointA = pointAtFraction(a.route.path, safePair.fractionA, a.cum).point;
       const safePointB = pointAtFraction(b.route.path, safePair.fractionB, b.cum).point;
+
+      // Si el punto donde se cruzan cae en una rotonda o un distribuidor,
+      // no se ofrece transbordo ahí: el pasajero sigue en la unidad hasta una
+      // parada donde sí pueda bajarse (los transbordos entre paradas
+      // cercanas ya están conectados más arriba).
+      if (hazards?.isUnsafeStop(safePointA) || hazards?.isUnsafeStop(safePointB)) continue;
 
       // Dos puntos pueden quedar cerca en línea recta y aun así no ser
       // caminables directamente (una avenida dividida, el óvalo de una
@@ -734,7 +760,12 @@ export async function planTrip(
 
     const walkBefore = legs[k - 1];
     if (walkBefore?.kind === "WALK") {
-      const better = await findShorterWalkToRide(ride.path, walkBefore.path[0], walkBefore.distanceMeters);
+      const better = await findShorterWalkToRide(
+        ride.path,
+        walkBefore.path[0],
+        walkBefore.distanceMeters,
+        hazards
+      );
       if (better && better.fraction > 0) {
         const cum = cumulativeDistances(ride.path);
         ride.path = slicePathByFraction(ride.path, better.fraction, 1, cum);
@@ -751,7 +782,7 @@ export async function planTrip(
     const walkAfter = legs[k + 1];
     if (walkAfter?.kind === "WALK") {
       const end = walkAfter.path[walkAfter.path.length - 1];
-      const better = await findShorterWalkToRide(ride.path, end, walkAfter.distanceMeters);
+      const better = await findShorterWalkToRide(ride.path, end, walkAfter.distanceMeters, hazards);
       if (better && better.fraction < 1) {
         const cum = cumulativeDistances(ride.path);
         ride.path = slicePathByFraction(ride.path, 0, better.fraction, cum);

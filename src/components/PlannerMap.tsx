@@ -15,7 +15,9 @@ import {
   LIGHT_ATTRIBUTION,
   LIGHT_TILE_URL,
 } from "@/lib/mapTiles";
+import { ROTATABLE_MAP_OPTIONS } from "@/lib/leafletRotate";
 import MapThemeToggle from "@/components/MapThemeToggle";
+import MapRotationControls from "@/components/MapRotationControls";
 import RoadPolyline from "@/components/RoadPolyline";
 
 const MARACAIBO_CENTER: [number, number] = [10.6427, -71.6125];
@@ -122,6 +124,7 @@ export default function PlannerMap({
         center={origin ?? MARACAIBO_CENTER}
         zoom={13}
         scrollWheelZoom
+        {...ROTATABLE_MAP_OPTIONS}
         style={{ height: "100%", width: "100%" }}
       >
         {dark ? (
@@ -173,6 +176,14 @@ export default function PlannerMap({
             <RecenterButton point={userLocation.point} dark={dark} />
           </>
         )}
+
+        {/* Debajo del botón de tema y, si está, del de centrar en mi ubicación. */}
+        <MapRotationControls
+          paths={legs.map((leg) => leg.path)}
+          dark={dark}
+          userPoint={userLocation?.point}
+          className={userLocation ? "top-[6.25rem] right-3" : "top-14 right-3"}
+        />
       </MapContainer>
     </div>
   );

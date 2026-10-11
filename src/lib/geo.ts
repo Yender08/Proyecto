@@ -507,3 +507,40 @@ export function attachStartToPath(from: Point, routed: Point[]): Point[] {
 export function attachEndToPath(routed: Point[], to: Point): Point[] {
   return attachStartToPath(to, [...routed].reverse()).reverse();
 }
+
+/**
+ * Dirección de avance (grados desde el norte) del tramo de ruta más cercano a
+ * `ref`, medida entre el punto más cercano y uno `lookAheadMeters` más
+ * adelante: así una curva o un zigzag pequeño del trazado no la desvía.
+ */
+export function headingAlongPaths(
+  paths: Point[][],
+  ref: Point,
+  lookAheadMeters = 120
+): { point: Point; heading: number } | null {
+  let best: { path: Point[]; cum: number[]; total: number; fraction: number; dist: number } | null =
+    null;
+  for (const path of paths) {
+    if (path.length < 2) continue;
+    const cum = cumulativeDistances(path);
+    const total = cum[cum.length - 1];
+    if (!total) continue;
+    const { fraction, distanceMeters } = projectPointToPath(path, ref, cum);
+    if (!best || distanceMeters < best.dist) best = { path, cum, total, fraction, dist: distanceMeters };
+  }
+  if (!best) return null;
+
+  const { path, cum, total, fraction } = best;
+  const step = Math.min(1, lookAheadMeters / total);
+  let from = fraction;
+  let to = fraction + step;
+  // Al final de la ruta se mira el último tramo, en el mismo sentido de avance.
+  if (to > 1) {
+    to = 1;
+    from = Math.max(0, 1 - step);
+  }
+  return {
+    point: pointAtFraction(path, fraction, cum).point,
+    heading: bearingDegrees(pointAtFraction(path, from, cum).point, pointAtFraction(path, to, cum).point),
+  };
+}

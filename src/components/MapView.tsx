@@ -13,7 +13,9 @@ import {
   LIGHT_ATTRIBUTION,
   LIGHT_TILE_URL,
 } from "@/lib/mapTiles";
+import { ROTATABLE_MAP_OPTIONS } from "@/lib/leafletRotate";
 import MapThemeToggle from "@/components/MapThemeToggle";
+import MapRotationControls from "@/components/MapRotationControls";
 import RoadPolyline from "@/components/RoadPolyline";
 
 const MARACAIBO_CENTER: [number, number] = [10.6427, -71.6125];
@@ -57,6 +59,7 @@ export default function MapView({
         center={center ?? MARACAIBO_CENTER}
         zoom={zoom}
         scrollWheelZoom
+        {...ROTATABLE_MAP_OPTIONS}
         style={{ height: "100%", width: "100%" }}
       >
         {dark ? (
@@ -99,6 +102,12 @@ export default function MapView({
             <Tooltip direction="top" offset={[0, -6]}>Tu ubicación</Tooltip>
           </Marker>
         )}
+
+        <MapRotationControls
+          paths={routes.map((route) => route.path)}
+          dark={dark}
+          userPoint={userLocation}
+        />
       </MapContainer>
     </div>
   );
