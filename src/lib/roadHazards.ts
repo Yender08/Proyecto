@@ -1,4 +1,5 @@
 import { type Point, projectPointToPath } from "./geo";
+import snapshot from "./data/roadHazards.maracaibo.json";
 
 /**
  * Lugares de la vía donde no se puede subir ni bajar pasajeros aunque la
@@ -7,13 +8,26 @@ import { type Point, projectPointToPath } from "./geo";
  * reconocerlos — una ruta que cruza un trébol en línea recta no "gira" — así
  * que se consultan directamente en OpenStreetMap (API pública de Overpass).
  *
- * Se descarga una sola vez por zona (la caja que cubre todas las rutas) y se
- * guarda en memoria; si el servicio no responde, se devuelve `null` y el
- * planificador sigue funcionando como antes, sin esta verificación.
+ * La API pública de Overpass es poco confiable (corta la conexión, responde
+ * 504/429 o tarda decenas de segundos) y, si fallaba, la verificación se
+ * perdía sin avisar. Por eso Maracaibo viene precargada en
+ * `data/roadHazards.maracaibo.json` (descargada con la misma consulta de
+ * `buildQuery`): si las rutas caen dentro de esa zona no se consulta nada en
+ * línea. Solo para rutas fuera de ella se descarga la zona en vivo (probando
+ * varios servidores espejo) y se guarda en memoria.
  */
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
-const OVERPASS_TIMEOUT_MS = 12000;
+// Servidores de Overpass, en orden de preferencia. Algunos rechazan POST o
+// cortan la conexión según la carga, así que se consulta por GET y ante
+// cualquier error se pasa al siguiente.
+const OVERPASS_URLS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+const OVERPASS_TIMEOUT_MS = 15000;
+const USER_AGENT = "MaracaiboMovilidad/1.0 (+https://maracaibo-movilidad.vercel.app)";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BBOX_MARGIN_DEG = 0.003; // ~300 m alrededor de las rutas
 
@@ -52,6 +66,11 @@ function classify(tags: Record<string, string>): HazardKind | null {
   if (tags.junction === "roundabout" || tags.junction === "circular") return "roundabout";
   const highway = tags.highway ?? "";
   if (highway.endsWith("_link")) return "link";
+  // En Maracaibo varias rampas de los distribuidores están marcadas como
+  // calles comunes ("residential") y solo el nombre las delata.
+  const name = (tags.name ?? "").toLowerCase();
+  if (/^(redoma|rotonda)\b/.test(name)) return "roundabout";
+  if (/^(distribuidor|elevado|paso elevado)\b/.test(name)) return "link";
   if (highway === "motorway") return "motorway";
   if (tags.bridge && tags.bridge !== "no") return "bridge";
   if (tags.tunnel && tags.tunnel !== "no") return "tunnel";
@@ -104,15 +123,62 @@ function buildHazards(ways: OverpassWay[]): RoadHazards {
   };
 }
 
+function buildQuery(bbox: string): string {
+  return `[out:json][timeout:25];
+(
+  way["highway"]["junction"~"^(roundabout|circular)$"]${bbox};
+  way["highway"~"_link$"]${bbox};
+  way["highway"="motorway"]${bbox};
+  way["highway"]["bridge"]["bridge"!="no"]${bbox};
+  way["highway"]["tunnel"]["tunnel"!="no"]${bbox};
+  way["highway"]["name"~"^(Distribuidor|Redoma|Rotonda|Elevado|Paso elevado|Puente)",i]${bbox};
+);
+out tags geom;`;
+}
+
+const snapshotBounds = snapshot.bbox as [number, number, number, number];
+const snapshotHazards = buildHazards(snapshot.elements as unknown as OverpassWay[]);
+
 const cache = new Map<string, { loadedAt: number; hazards: RoadHazards }>();
+
+async function fetchOverpass(query: string): Promise<OverpassWay[] | null> {
+  for (const url of OVERPASS_URLS) {
+    try {
+      const res = await fetch(`${url}?data=${encodeURIComponent(query)}`, {
+        headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        console.warn(`[roadHazards] ${url} respondió ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      // Overpass responde 200 con un "remark" cuando la consulta se cortó a
+      // medias: esos datos incompletos no sirven.
+      if (data?.remark) {
+        console.warn(`[roadHazards] ${url}: ${data.remark}`);
+        continue;
+      }
+      return (data?.elements ?? []) as OverpassWay[];
+    } catch (err) {
+      console.warn(`[roadHazards] ${url} falló:`, (err as Error).message);
+    }
+  }
+  return null;
+}
 
 /**
  * Zonas de la vía donde no se debe subir ni bajar pasajeros, para la caja
- * que cubre todos los puntos dados. `null` si OpenStreetMap no respondió.
+ * que cubre todos los puntos dados. Dentro de Maracaibo usa los datos
+ * precargados; fuera, los consulta en línea y, si ningún servidor responde,
+ * lo avisa en el log y usa igual los precargados (cubren al menos la ciudad).
  */
 export async function loadRoadHazards(points: Point[]): Promise<RoadHazards | null> {
   if (points.length === 0) return null;
   const [minLat, minLng, maxLat, maxLng] = boundsOf(points);
+  const [sS, sW, sN, sE] = snapshotBounds;
+  if (minLat >= sS && minLng >= sW && maxLat <= sN && maxLng <= sE) return snapshotHazards;
+
   // Se redondea la caja para que viajes distintos sobre la misma red de
   // rutas reutilicen la misma descarga.
   const round = (v: number, up: boolean) =>
@@ -126,30 +192,14 @@ export async function loadRoadHazards(points: Point[]): Promise<RoadHazards | nu
   const cached = cache.get(key);
   if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) return cached.hazards;
 
-  const bbox = `(${s},${w},${n},${e})`;
-  const query = `[out:json][timeout:20];
-(
-  way["highway"]["junction"~"^(roundabout|circular)$"]${bbox};
-  way["highway"~"_link$"]${bbox};
-  way["highway"="motorway"]${bbox};
-  way["highway"]["bridge"]["bridge"!="no"]${bbox};
-  way["highway"]["tunnel"]["tunnel"!="no"]${bbox};
-);
-out tags geom;`;
-
-  try {
-    const res = await fetch(OVERPASS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `data=${encodeURIComponent(query)}`,
-      signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const hazards = buildHazards((data?.elements ?? []) as OverpassWay[]);
-    cache.set(key, { loadedAt: Date.now(), hazards });
-    return hazards;
-  } catch {
-    return null;
+  const ways = await fetchOverpass(buildQuery(`(${s},${w},${n},${e})`));
+  if (!ways) {
+    console.warn(
+      "[roadHazards] Overpass no respondió; se usan solo las zonas precargadas de Maracaibo"
+    );
+    return snapshotHazards;
   }
+  const hazards = buildHazards(ways);
+  cache.set(key, { loadedAt: Date.now(), hazards });
+  return hazards;
 }

@@ -324,9 +324,14 @@ export async function planTrip(
   addWalkEdge(ORIGIN_NODE, DEST_NODE, haversineMeters(origin, destination));
 
   // Global stop registry (a stop can serve several routes -> shared node -> free transfer).
+  // Una parada formal que quedó dentro de una rotonda o un distribuidor
+  // tampoco sirve para subir, bajar ni transbordar: se ignora y el pasajero
+  // sigue en la unidad hasta el siguiente punto donde sí pueda bajarse.
+  const isUsableStop = (s: { lat: number; lng: number }) =>
+    !hazards?.isUnsafeStop([s.lat, s.lng]);
   const allStops = new Map<string, { id: string; name: string; lat: number; lng: number }>();
   for (const route of routes) {
-    for (const s of route.stops) allStops.set(s.id, s);
+    for (const s of route.stops) if (isUsableStop(s)) allStops.set(s.id, s);
   }
   for (const s of allStops.values()) {
     addNode({ id: `s:${s.id}`, point: [s.lat, s.lng], label: s.name, stopId: s.id });
@@ -380,6 +385,7 @@ export async function planTrip(
       let bestOwnStopDistD = Infinity;
 
       for (const s of route.stops) {
+        if (!allStops.has(s.id)) continue;
         const { fraction } = projectPointToPath(route.path, [s.lat, s.lng], cum);
         chain.push({ id: `s:${s.id}`, fraction });
         bestOwnStopDistO = Math.min(bestOwnStopDistO, haversineMeters(origin, [s.lat, s.lng]));
