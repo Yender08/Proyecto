@@ -1,0 +1,112 @@
+// Esquema de datos de la plataforma de movilidad urbana de Maracaibo.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  OPERATOR
+}
+
+enum VehicleStatus {
+  ACTIVE
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum IncidentType {
+  ACCIDENTE
+  AVERIA
+  TRAFICO
+  DESVIO
+  OTRO
+}
+
+enum IncidentStatus {
+  ABIERTA
+  EN_ATENCION
+  RESUELTA
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(OPERATOR)
+  createdAt    DateTime @default(now())
+}
+
+model Route {
+  id          String      @id @default(cuid())
+  code        String      @unique
+  name        String
+  description String?
+  color       String      @default("#2563eb")
+  // Polilínea ordenada de la ruta, registrada a mano por el operador: [[lat, lng], ...]
+  path        Json
+  // Velocidad promedio operativa, usada para estimar tiempos de viaje en el planificador
+  avgSpeedKmh Float       @default(18)
+  active      Boolean     @default(true)
+  stops       RouteStop[]
+  vehicles    Vehicle[]
+  incidents   Incident[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Stop {
+  id        String      @id @default(cuid())
+  name      String
+  lat       Float
+  lng       Float
+  routes    RouteStop[]
+  createdAt DateTime    @default(now())
+}
+
+model RouteStop {
+  id       String @id @default(cuid())
+  routeId  String
+  stopId   String
+  sequence Int
+  route    Route  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop     Stop   @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, stopId])
+  @@index([routeId, sequence])
+}
+
+model Vehicle {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  plate       String        @unique
+  capacity    Int           @default(30)
+  status      VehicleStatus @default(ACTIVE)
+  routeId     String?
+  route       Route?        @relation(fields: [routeId], references: [id])
+  incidents   Incident[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model Incident {
+  id          String         @id @default(cuid())
+  type        IncidentType
+  status      IncidentStatus @default(ABIERTA)
+  description String
+  lat         Float
+  lng         Float
+  routeId     String?
+  route       Route?         @relation(fields: [routeId], references: [id])
+  vehicleId   String?
+  vehicle     Vehicle?       @relation(fields: [vehicleId], references: [id])
+  reportedBy  String?
+  createdAt   DateTime       @default(now())
+  resolvedAt  DateTime?
+}
