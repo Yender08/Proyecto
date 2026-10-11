@@ -22,6 +22,15 @@ import RoadPolyline from "@/components/RoadPolyline";
 
 const MARACAIBO_CENTER: [number, number] = [10.6427, -71.6125];
 
+// Filas de la columna de botones flotantes (tema, centrar, giro). Se corren
+// hacia abajo lo que mida --map-overlay-top: en móvil la búsqueda flota sobre
+// el mapa y los botones quedan justo debajo de ella.
+const MAP_CONTROL_TOP = [
+  "top-[calc(var(--map-overlay-top,0px)_+_0.75rem)]",
+  "top-[calc(var(--map-overlay-top,0px)_+_3.5rem)]",
+  "top-[calc(var(--map-overlay-top,0px)_+_6.25rem)]",
+];
+
 function pinIcon(color: string, label: string) {
   return L.divIcon({
     className: "planner-pin",
@@ -72,7 +81,7 @@ function RecenterButton({ point, dark }: { point: Point; dark: boolean }) {
       type="button"
       onClick={() => map.flyTo(point, Math.max(map.getZoom(), 16), { duration: 0.6 })}
       title="Centrar en mi ubicación"
-      className={`absolute top-14 right-3 z-[1000] flex h-9 w-9 items-center justify-center rounded-full shadow-md border ${
+      className={`absolute ${MAP_CONTROL_TOP[1]} right-3 z-[1000] flex h-9 w-9 items-center justify-center rounded-full shadow-md border ${
         dark
           ? "bg-slate-800 text-sky-300 border-slate-600 hover:bg-slate-700"
           : "bg-white text-blue-600 border-slate-200 hover:bg-slate-50"
@@ -103,6 +112,8 @@ export interface PlannerMapProps {
   onMapClick?: (point: Point) => void;
   userLocation?: UserLocation | null;
   heightClassName?: string;
+  /** Borde y esquinas del marco del mapa (clases de Tailwind). */
+  frameClassName?: string;
 }
 
 export default function PlannerMap({
@@ -112,14 +123,15 @@ export default function PlannerMap({
   onMapClick,
   userLocation,
   heightClassName = "h-[70vh]",
+  frameClassName = "rounded-xl border border-slate-200 shadow-sm",
 }: PlannerMapProps) {
   const { dark, toggle } = useMapTheme();
 
   return (
     <div
-      className={`relative w-full ${heightClassName} rounded-xl overflow-hidden border border-slate-200 shadow-sm`}
+      className={`planner-map relative w-full ${heightClassName} overflow-hidden ${frameClassName}`}
     >
-      <MapThemeToggle dark={dark} onToggle={toggle} />
+      <MapThemeToggle dark={dark} onToggle={toggle} className={`${MAP_CONTROL_TOP[0]} right-3`} />
       <MapContainer
         center={origin ?? MARACAIBO_CENTER}
         zoom={13}
@@ -182,7 +194,7 @@ export default function PlannerMap({
           paths={legs.map((leg) => leg.path)}
           dark={dark}
           userPoint={userLocation?.point}
-          className={userLocation ? "top-[6.25rem] right-3" : "top-14 right-3"}
+          className={`${userLocation ? MAP_CONTROL_TOP[2] : MAP_CONTROL_TOP[1]} right-3`}
         />
       </MapContainer>
     </div>

@@ -3,16 +3,19 @@
 export default function MapThemeToggle({
   dark,
   onToggle,
+  className = "top-3 right-3",
 }: {
   dark: boolean;
   onToggle: () => void;
+  /** Posición del botón dentro del mapa (clases de Tailwind). */
+  className?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
       title={dark ? "Cambiar a mapa claro" : "Cambiar a mapa oscuro"}
-      className={`absolute top-3 right-3 z-[1000] flex h-9 w-9 items-center justify-center rounded-full shadow-md border ${
+      className={`absolute ${className} z-[1000] flex h-9 w-9 items-center justify-center rounded-full shadow-md border ${
         dark
           ? "bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700"
           : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"

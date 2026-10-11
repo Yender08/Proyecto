@@ -49,3 +49,19 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .user-location-pulse { animation: none; }
 }
+
+/* Planificador en móvil: la búsqueda (arriba) y el itinerario (abajo) flotan
+   sobre el mapa. La página publica su alto en --map-overlay-top/-bottom para
+   que los controles propios de Leaflet (zoom, atribución) no queden debajo. */
+.planner-map .leaflet-top {
+  top: var(--map-overlay-top, 0px);
+}
+.planner-map .leaflet-bottom {
+  bottom: var(--map-overlay-bottom, 0px);
+}
+@media (min-width: 1024px) {
+  .planner-root {
+    --map-overlay-top: 0px !important;
+    --map-overlay-bottom: 0px !important;
+  }
+}
